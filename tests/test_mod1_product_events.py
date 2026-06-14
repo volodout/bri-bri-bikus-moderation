@@ -7,7 +7,8 @@ import uuid
 
 from moderation.database import ModerationStore
 from moderation.http_app import handle_product_event_post
-from moderation.product_events import BusinessError, ProductEventService
+from moderation.errors import BusinessError
+from moderation.product_events import ProductEventService
 
 
 PRODUCT_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"

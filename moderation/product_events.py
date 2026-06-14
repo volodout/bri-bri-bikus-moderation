@@ -10,30 +10,11 @@ from typing import Any
 
 from moderation.b2b_client import B2BClientError
 from moderation.database import ModerationStore
+from moderation.errors import BusinessError, UpstreamError, ValidationError
 
 
 PRODUCT_EVENT_SENDER = "b2b"
 PRODUCT_EVENTS = {"CREATED", "EDITED", "DELETED"}
-
-
-class ProductEventError(Exception):
-    status_code = 400
-
-    def __init__(self, message: str):
-        super().__init__(message)
-        self.message = message
-
-
-class ValidationError(ProductEventError):
-    pass
-
-
-class BusinessError(ProductEventError):
-    pass
-
-
-class UpstreamError(ProductEventError):
-    status_code = 500
 
 
 @dataclass(frozen=True)
@@ -334,4 +315,3 @@ def _next_queue_priority(existing: Any, total_active_quantity: int) -> int:
     if old_status == "MODERATED":
         return 3 if total_active_quantity > 0 else 4
     return int(existing["queue_priority"])
-

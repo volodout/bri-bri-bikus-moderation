@@ -3,6 +3,7 @@ from moderation.config import Settings
 from moderation.database import ModerationStore
 from moderation.http_app import serve
 from moderation.product_events import ProductEventService
+from moderation.queue_service import QueueService
 
 
 def main() -> None:
@@ -11,7 +12,8 @@ def main() -> None:
     store.ensure_schema()
     b2b_client = B2BClient(settings.b2b_base_url, settings.mod_to_b2b_key)
     product_event_service = ProductEventService(store, b2b_client)
-    serve(settings.host, settings.port, product_event_service, settings.b2b_to_mod_key)
+    queue_service = QueueService(store)
+    serve(settings.host, settings.port, product_event_service, settings.b2b_to_mod_key, queue_service)
 
 
 if __name__ == "__main__":
