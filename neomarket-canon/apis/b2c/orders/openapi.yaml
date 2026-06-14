@@ -1,0 +1,165 @@
+openapi: 3.0.3
+info:
+  title: "NeoMarket B2C: Заказы"
+  version: "0.1"
+  description: |
+    Проектируется синдикатом QA Corps.
+    Домены: оформление заказа, статусы (state machine), отмена, история заказов.
+
+paths:
+  /api/v1/orders/{order_id}/cancel:
+    post:
+      tags:
+        - Orders
+      summary: Отмена заказа (US-ORD-03)
+      description: |
+        Отменяет заказ, пока он не отгружен. Допустимые статусы: CREATED, PAID, ASSEMBLING.
+        B2C вызывает B2B unreserve для освобождения резерва. Если unreserve упал
+        (таймаут/5xx), намерение отмены принимается, заказ переходит в
+        CANCEL_PENDING и unreserve ретраится асинхронно до успеха (→ CANCELLED).
+        Чужой заказ → 404 (IDOR: не раскрываем существование).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: order_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: |
+            Отмена принята. status = CANCELLED при успешном unreserve,
+            CANCEL_PENDING если unreserve временно недоступен.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Заказ не найден (в т.ч. чужой)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: ORDER_NOT_FOUND
+                message: Заказ не найден
+        '409':
+          description: Отмена недопустима в текущем статусе
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelNotAllowed'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    OrderStatus:
+      type: string
+      enum:
+        - CREATED
+        - PAID
+        - ASSEMBLING
+        - DELIVERING
+        - DELIVERED
+        - CANCELLED
+        - CANCEL_PENDING
+    OrderItem:
+      type: object
+      required:
+        - id
+        - sku_id
+        - product_id
+        - product_title
+        - sku_name
+        - quantity
+        - unit_price
+        - line_total
+      properties:
+        id:
+          type: string
+          format: uuid
+        sku_id:
+          type: string
+          format: uuid
+        product_id:
+          type: string
+          format: uuid
+        product_title:
+          type: string
+        sku_name:
+          type: string
+        quantity:
+          type: integer
+          minimum: 1
+        unit_price:
+          type: integer
+          description: Цена за единицу в копейках, зафиксирована при покупке
+        line_total:
+          type: integer
+          description: unit_price * quantity, копейки
+    Order:
+      type: object
+      required:
+        - id
+        - status
+        - items
+        - total_amount
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItem'
+        total_amount:
+          type: integer
+          description: Сумма заказа в копейках
+        delivery_address:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+    CancelNotAllowed:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          required:
+            - current_status
+          properties:
+            current_status:
+              $ref: '#/components/schemas/OrderStatus'
+      example:
+        code: CANCEL_NOT_ALLOWED
+        message: "Отмена невозможна: заказ в статусе DELIVERING"
+        current_status: DELIVERING
