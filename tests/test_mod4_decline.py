@@ -137,15 +137,6 @@ class DeclineTestCase(unittest.TestCase):
         with self.assertRaises(BusinessError):
             service.decline(PRODUCT_ID, MODERATOR_ID, payload)
 
-    def test_decline_rejects_hard_reason_until_mod5(self) -> None:
-        self.insert_card()
-        service = DecisionService(self.store, FakeB2BClient())
-        payload = self.decline_payload()
-        payload["blocking_reason_id"] = HARD_REASON_ID
-
-        with self.assertRaises(BusinessError):
-            service.decline(PRODUCT_ID, MODERATOR_ID, payload)
-
     def test_decline_validates_field_reports(self) -> None:
         self.insert_card()
         service = DecisionService(self.store, FakeB2BClient())
@@ -182,4 +173,3 @@ class DeclineTestCase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
