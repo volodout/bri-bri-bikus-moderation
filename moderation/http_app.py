@@ -120,6 +120,7 @@ def make_handler(
     b2b_to_mod_key: str,
     queue_service: Any | None = None,
     decision_service: Any | None = None,
+    reference_service: Any | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     class ModerationRequestHandler(BaseHTTPRequestHandler):
         server_version = "NeoMarketModeration/1.0"
@@ -127,6 +128,9 @@ def make_handler(
         def do_GET(self) -> None:
             if self.path == "/health":
                 self._send_json(200, {"status": "ok"})
+                return
+            if self.path == "/api/v1/product-blocking-reasons" and reference_service is not None:
+                self._send_json(200, reference_service.blocking_reasons())
                 return
             self._send_json(404, {"error": "Not found"})
 
@@ -199,8 +203,15 @@ def serve(
     b2b_to_mod_key: str,
     queue_service: Any | None = None,
     decision_service: Any | None = None,
+    reference_service: Any | None = None,
 ) -> None:
-    handler = make_handler(product_event_service, b2b_to_mod_key, queue_service, decision_service)
+    handler = make_handler(
+        product_event_service,
+        b2b_to_mod_key,
+        queue_service,
+        decision_service,
+        reference_service,
+    )
     server = ThreadingHTTPServer((host, port), handler)
     try:
         server.serve_forever()
