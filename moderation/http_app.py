@@ -89,6 +89,32 @@ def handle_approve_post(
     return 200, result.as_json()
 
 
+def handle_decline_post(
+    path: str,
+    headers: Mapping[str, str],
+    raw_body: bytes,
+    decision_service: Any,
+) -> tuple[int, dict[str, Any] | None]:
+    product_id = _match_product_action(path, "decline")
+    if product_id is None:
+        return 404, {"error": "Not found"}
+
+    try:
+        moderator_id = headers.get("X-Moderator-Id")
+        if moderator_id is None:
+            raise UnauthorizedError("X-Moderator-Id header is required")
+        payload = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+        if not isinstance(payload, dict):
+            raise json.JSONDecodeError("non-object body", "", 0)
+        result = decision_service.decline(product_id, moderator_id, payload)
+    except ModerationError as error:
+        return error.status_code, {"error": error.message}
+    except json.JSONDecodeError:
+        return 400, {"error": "Request body must be a JSON object"}
+
+    return 200, result.as_json()
+
+
 def make_handler(
     product_event_service: Any,
     b2b_to_mod_key: str,
@@ -123,6 +149,13 @@ def make_handler(
                 )
             elif _match_product_action(self.path, "approve") is not None and decision_service is not None:
                 status_code, payload = handle_approve_post(
+                    self.path,
+                    self.headers,
+                    raw_body,
+                    decision_service,
+                )
+            elif _match_product_action(self.path, "decline") is not None and decision_service is not None:
+                status_code, payload = handle_decline_post(
                     self.path,
                     self.headers,
                     raw_body,
