@@ -112,14 +112,14 @@ class DecisionService:
             reason = _get_blocking_reason(connection, request["blocking_reason_id"])
             if reason is None:
                 raise BusinessError("Blocking reason not found")
-            if bool(reason["hard_block"]):
-                raise BusinessError("Blocking reason requires hard block flow")
+            hard_block = bool(reason["hard_block"])
+            decision_status = "HARD_BLOCKED" if hard_block else "BLOCKED"
 
             now = utc_now()
             cursor = connection.execute(
                 """
                 UPDATE product_moderation
-                SET status = 'BLOCKED',
+                SET status = ?,
                     date_moderation = ?,
                     blocking_reason_id = ?,
                     moderator_comment = ?
@@ -128,6 +128,7 @@ class DecisionService:
                   AND moderator_id = ?
                 """,
                 (
+                    decision_status,
                     now,
                     request["blocking_reason_id"],
                     request["moderator_comment"],
@@ -168,14 +169,14 @@ class DecisionService:
                 )
             self._send_blocked_event(
                 product_id,
-                hard_block=False,
+                hard_block=hard_block,
                 reason_id=reason["id"],
                 reason_title=reason["title"],
                 moderator_comment=request["moderator_comment"],
                 field_reports=request["field_reports"],
             )
 
-        return DecisionResult(product_id=product_id, status="BLOCKED")
+        return DecisionResult(product_id=product_id, status=decision_status)
 
     def _fetch_product(self, product_id: str) -> dict[str, Any]:
         try:
