@@ -47,3 +47,26 @@ class B2BClient:
             raise B2BClientError("B2B returned non-object product payload")
         return product
 
+    def send_moderation_event(self, payload: dict[str, Any]) -> None:
+        if not self.base_url:
+            raise B2BClientError("B2B_BASE_URL is not configured")
+
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        request = Request(
+            f"{self.base_url}/api/v1/events/moderation",
+            data=body,
+            headers={
+                "X-Service-Key": self.service_key,
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=self.timeout) as response:
+                if response.status >= 400:
+                    raise B2BClientError(f"B2B returned HTTP {response.status}")
+        except HTTPError as error:
+            raise B2BClientError(f"B2B returned HTTP {error.code}") from error
+        except URLError as error:
+            raise B2BClientError(f"B2B request failed: {error.reason}") from error

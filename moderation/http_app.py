@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import re
 from typing import Any, Mapping
 
 from moderation.errors import ModerationError, UnauthorizedError
@@ -62,10 +63,37 @@ def handle_get_next_post(
     return 200, card.as_json()
 
 
+def handle_approve_post(
+    path: str,
+    headers: Mapping[str, str],
+    raw_body: bytes,
+    decision_service: Any,
+) -> tuple[int, dict[str, Any] | None]:
+    product_id = _match_product_action(path, "approve")
+    if product_id is None:
+        return 404, {"error": "Not found"}
+
+    try:
+        moderator_id = headers.get("X-Moderator-Id")
+        if moderator_id is None:
+            raise UnauthorizedError("X-Moderator-Id header is required")
+        payload = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+        if not isinstance(payload, dict):
+            raise json.JSONDecodeError("non-object body", "", 0)
+        result = decision_service.approve(product_id, moderator_id, payload)
+    except ModerationError as error:
+        return error.status_code, {"error": error.message}
+    except json.JSONDecodeError:
+        return 400, {"error": "Request body must be a JSON object"}
+
+    return 200, result.as_json()
+
+
 def make_handler(
     product_event_service: Any,
     b2b_to_mod_key: str,
     queue_service: Any | None = None,
+    decision_service: Any | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     class ModerationRequestHandler(BaseHTTPRequestHandler):
         server_version = "NeoMarketModeration/1.0"
@@ -93,6 +121,13 @@ def make_handler(
                     raw_body,
                     queue_service,
                 )
+            elif _match_product_action(self.path, "approve") is not None and decision_service is not None:
+                status_code, payload = handle_approve_post(
+                    self.path,
+                    self.headers,
+                    raw_body,
+                    decision_service,
+                )
             else:
                 status_code, payload = 404, {"error": "Not found"}
             self._send_json(status_code, payload)
@@ -117,14 +152,22 @@ def make_handler(
     return ModerationRequestHandler
 
 
+def _match_product_action(path: str, action: str) -> str | None:
+    match = re.fullmatch(rf"/api/v1/products/([^/]+)/{action}", path)
+    if match is None:
+        return None
+    return match.group(1)
+
+
 def serve(
     host: str,
     port: int,
     product_event_service: Any,
     b2b_to_mod_key: str,
     queue_service: Any | None = None,
+    decision_service: Any | None = None,
 ) -> None:
-    handler = make_handler(product_event_service, b2b_to_mod_key, queue_service)
+    handler = make_handler(product_event_service, b2b_to_mod_key, queue_service, decision_service)
     server = ThreadingHTTPServer((host, port), handler)
     try:
         server.serve_forever()
