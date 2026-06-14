@@ -5,6 +5,7 @@ from moderation.decision_service import DecisionService
 from moderation.http_app import serve
 from moderation.product_events import ProductEventService
 from moderation.queue_service import QueueService
+from moderation.reference_service import ReferenceService
 
 
 def main() -> None:
@@ -15,6 +16,7 @@ def main() -> None:
     product_event_service = ProductEventService(store, b2b_client)
     queue_service = QueueService(store)
     decision_service = DecisionService(store, b2b_client)
+    reference_service = ReferenceService(store)
     serve(
         settings.host,
         settings.port,
@@ -22,6 +24,7 @@ def main() -> None:
         settings.b2b_to_mod_key,
         queue_service,
         decision_service,
+        reference_service,
     )
 
 
