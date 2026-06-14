@@ -6,7 +6,7 @@ import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Mapping
 
-from moderation.product_events import ProductEventError
+from moderation.errors import ModerationError, UnauthorizedError
 
 
 def handle_product_event_post(
@@ -27,7 +27,7 @@ def handle_product_event_post(
             raise json.JSONDecodeError("empty body", "", 0)
         payload = json.loads(raw_body.decode("utf-8"))
         result = product_event_service.handle(payload)
-    except ProductEventError as error:
+    except ModerationError as error:
         return error.status_code, {"error": error.message}
     except json.JSONDecodeError:
         return 400, {"error": "Request body must be valid JSON"}
@@ -35,7 +35,38 @@ def handle_product_event_post(
     return 200, result.as_json()
 
 
-def make_handler(product_event_service: Any, b2b_to_mod_key: str) -> type[BaseHTTPRequestHandler]:
+def handle_get_next_post(
+    path: str,
+    headers: Mapping[str, str],
+    raw_body: bytes,
+    queue_service: Any,
+) -> tuple[int, dict[str, Any] | None]:
+    if path != "/api/v1/product-moderation/get-next":
+        return 404, {"error": "Not found"}
+
+    try:
+        moderator_id = headers.get("X-Moderator-Id")
+        if moderator_id is None:
+            raise UnauthorizedError("X-Moderator-Id header is required")
+        payload = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+        if not isinstance(payload, dict):
+            raise json.JSONDecodeError("non-object body", "", 0)
+        card = queue_service.get_next(payload.get("queueId"), moderator_id)
+    except ModerationError as error:
+        return error.status_code, {"error": error.message}
+    except json.JSONDecodeError:
+        return 400, {"error": "Request body must be a JSON object"}
+
+    if card is None:
+        return 204, None
+    return 200, card.as_json()
+
+
+def make_handler(
+    product_event_service: Any,
+    b2b_to_mod_key: str,
+    queue_service: Any | None = None,
+) -> type[BaseHTTPRequestHandler]:
     class ModerationRequestHandler(BaseHTTPRequestHandler):
         server_version = "NeoMarketModeration/1.0"
 
@@ -46,13 +77,24 @@ def make_handler(product_event_service: Any, b2b_to_mod_key: str) -> type[BaseHT
             self._send_json(404, {"error": "Not found"})
 
         def do_POST(self) -> None:
-            status_code, payload = handle_product_event_post(
-                self.path,
-                self.headers,
-                self._read_body(),
-                product_event_service,
-                b2b_to_mod_key,
-            )
+            raw_body = self._read_body()
+            if self.path == "/api/v1/events/product":
+                status_code, payload = handle_product_event_post(
+                    self.path,
+                    self.headers,
+                    raw_body,
+                    product_event_service,
+                    b2b_to_mod_key,
+                )
+            elif self.path == "/api/v1/product-moderation/get-next" and queue_service is not None:
+                status_code, payload = handle_get_next_post(
+                    self.path,
+                    self.headers,
+                    raw_body,
+                    queue_service,
+                )
+            else:
+                status_code, payload = 404, {"error": "Not found"}
             self._send_json(status_code, payload)
 
         def log_message(self, format: str, *args: Any) -> None:
@@ -62,19 +104,27 @@ def make_handler(product_event_service: Any, b2b_to_mod_key: str) -> type[BaseHT
             length = int(self.headers.get("Content-Length", "0"))
             return self.rfile.read(length)
 
-        def _send_json(self, status_code: int, payload: dict[str, Any]) -> None:
-            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        def _send_json(self, status_code: int, payload: dict[str, Any] | None) -> None:
+            body = b"" if payload is None else json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(status_code)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
+            if payload is not None:
+                self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(body)
+            if body:
+                self.wfile.write(body)
 
     return ModerationRequestHandler
 
 
-def serve(host: str, port: int, product_event_service: Any, b2b_to_mod_key: str) -> None:
-    handler = make_handler(product_event_service, b2b_to_mod_key)
+def serve(
+    host: str,
+    port: int,
+    product_event_service: Any,
+    b2b_to_mod_key: str,
+    queue_service: Any | None = None,
+) -> None:
+    handler = make_handler(product_event_service, b2b_to_mod_key, queue_service)
     server = ThreadingHTTPServer((host, port), handler)
     try:
         server.serve_forever()

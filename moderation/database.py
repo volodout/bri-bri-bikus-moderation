@@ -22,10 +22,10 @@ class ModerationStore:
         return connection
 
     @contextmanager
-    def transaction(self) -> Iterator[sqlite3.Connection]:
+    def transaction(self, immediate: bool = False) -> Iterator[sqlite3.Connection]:
         connection = self.connect()
         try:
-            connection.execute("BEGIN")
+            connection.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
             yield connection
             connection.commit()
         except Exception:
@@ -99,4 +99,3 @@ class ModerationStore:
                     ON product_moderation(status, queue_priority, date_updated);
                 """
             )
-
