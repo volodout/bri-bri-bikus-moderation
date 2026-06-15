@@ -42,7 +42,7 @@ def handle_get_next_post(
     raw_body: bytes,
     queue_service: Any,
 ) -> tuple[int, dict[str, Any] | None]:
-    if path != "/api/v1/product-moderation/get-next":
+    if path != "/api/v1/queue/claim":
         return 404, error_payload("NOT_FOUND", "Not found")
 
     try:
@@ -52,7 +52,7 @@ def handle_get_next_post(
         payload = json.loads(raw_body.decode("utf-8")) if raw_body else {}
         if not isinstance(payload, dict):
             raise json.JSONDecodeError("non-object body", "", 0)
-        card = queue_service.get_next(payload.get("queueId"), moderator_id)
+        card = queue_service.get_next(payload.get("queue_priority"), moderator_id)
     except ModerationError as error:
         return error.status_code, error_payload(error.code, error.message)
     except json.JSONDecodeError:
@@ -144,7 +144,7 @@ def make_handler(
                     product_event_service,
                     b2b_to_mod_key,
                 )
-            elif self.path == "/api/v1/product-moderation/get-next" and queue_service is not None:
+            elif self.path == "/api/v1/queue/claim" and queue_service is not None:
                 status_code, payload = handle_get_next_post(
                     self.path,
                     self.headers,
