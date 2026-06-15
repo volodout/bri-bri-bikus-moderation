@@ -236,7 +236,7 @@ class GetNextTestCase(unittest.TestCase):
                 "id": product_id,
                 "blocking_reason": {"id": reason_id, "title": "Bad description"},
                 "field_reports": [
-                    {"field_name": "description", "sku_id": None, "comment": "Too vague"}
+                    {"field_path": "description", "sku_id": None, "message": "Too vague"}
                 ],
             },
             blocking_reason_id=reason_id,
@@ -251,7 +251,7 @@ class GetNextTestCase(unittest.TestCase):
                 "blocking_reason": {"id": reason_id, "title": "Bad description"},
                 "moderator_comment": "Fix the description",
                 "field_reports": [
-                    {"field_name": "description", "sku_id": None, "comment": "Too vague"}
+                    {"field_path": "description", "sku_id": None, "message": "Too vague"}
                 ],
                 "date_blocked": "2026-03-01T09:00:00.000Z",
             },

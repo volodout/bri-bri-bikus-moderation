@@ -18,15 +18,7 @@ from moderation.errors import (
 )
 from moderation.product_events import utc_now
 
-FIELD_REPORT_NAMES = {
-    "title",
-    "description",
-    "product_images",
-    "category",
-    "sku_name",
-    "sku_image",
-    "sku_price",
-}
+FIELD_REPORT_SEVERITIES = {"INFO", "WARNING", "ERROR"}
 
 
 @dataclass(frozen=True)
@@ -178,10 +170,11 @@ class DecisionService:
             ).fetchone()
             _ensure_assigned_for_decision(row, moderator_id)
 
-            reason = _get_blocking_reason(connection, request["blocking_reason_id"])
-            if reason is None:
+            reasons = _get_blocking_reasons(connection, request["blocking_reason_ids"])
+            if any(reason is None for reason in reasons):
                 raise BusinessError("Blocking reason not found")
-            hard_block = bool(reason["hard_block"])
+            primary_reason = _primary_blocking_reason(reasons)
+            hard_block = any(bool(reason["hard_block"]) for reason in reasons)
             decision_status = "HARD_BLOCKED" if hard_block else "BLOCKED"
 
             now = utc_now()
@@ -199,7 +192,7 @@ class DecisionService:
                 (
                     decision_status,
                     now,
-                    request["blocking_reason_id"],
+                    primary_reason["id"],
                     request["moderator_comment"],
                     product_id,
                     moderator_id,
@@ -220,26 +213,28 @@ class DecisionService:
                     INSERT INTO product_moderation_field_report (
                         id,
                         product_moderation_id,
-                        field_name,
+                        field_path,
                         sku_id,
-                        comment,
+                        message,
+                        severity,
                         date_created
                     )
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         str(uuid.uuid4()),
                         row["id"],
-                        report["field_name"],
+                        report["field_path"],
                         report["sku_id"],
-                        report["comment"],
+                        report["message"],
+                        report["severity"],
                         now,
                     ),
                 )
             self._send_blocked_event(
                 product_id,
                 hard_block=hard_block,
-                reason_id=reason["id"],
+                reason_id=primary_reason["id"],
                 moderator_id=moderator_id,
                 moderator_comment=request["moderator_comment"],
                 field_reports=request["field_reports"],
@@ -283,7 +278,7 @@ class DecisionService:
         hard_block: bool,
         reason_id: str,
         moderator_id: str,
-        moderator_comment: str,
+        moderator_comment: str | None,
         field_reports: list[dict[str, Any]],
     ) -> None:
         try:
@@ -297,7 +292,7 @@ class DecisionService:
                     "moderator_comment": moderator_comment,
                     "blocking_reason_id": reason_id,
                     "hard_block": hard_block,
-                    "field_reports": field_reports,
+                    "field_reports": _b2b_field_reports(field_reports),
                 }
             )
         except B2BClientError as error:
@@ -330,12 +325,19 @@ def _decline_request(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValidationError("Request body must be a JSON object")
 
-    blocking_reason_id = _validate_uuid(payload.get("blocking_reason_id"), "blocking_reason_id")
-    moderator_comment = payload.get("moderator_comment")
-    if not isinstance(moderator_comment, str) or not moderator_comment.strip():
-        raise ValidationError("moderator_comment is required")
-    if len(moderator_comment) > 1000:
-        raise ValidationError("moderator_comment must be at most 1000 characters")
+    reason_ids = payload.get("blocking_reason_ids")
+    if not isinstance(reason_ids, list) or len(reason_ids) == 0:
+        raise ValidationError("blocking_reason_ids must be a non-empty array")
+    blocking_reason_ids = [
+        _validate_uuid(reason_id, "blocking_reason_ids[]")
+        for reason_id in reason_ids
+    ]
+
+    moderator_comment = payload.get("comment")
+    if moderator_comment is not None and not isinstance(moderator_comment, str):
+        raise ValidationError("comment must be a string")
+    if isinstance(moderator_comment, str) and len(moderator_comment) > 2000:
+        raise ValidationError("comment must be at most 2000 characters")
 
     raw_reports = payload.get("field_reports", [])
     if not isinstance(raw_reports, list):
@@ -345,35 +347,66 @@ def _decline_request(payload: Any) -> dict[str, Any]:
     for report in raw_reports:
         if not isinstance(report, dict):
             raise ValidationError("field_reports items must be objects")
-        field_name = report.get("field_name")
-        if field_name not in FIELD_REPORT_NAMES:
-            raise ValidationError("field_reports.field_name is invalid")
+        field_path = report.get("field_path")
+        if not isinstance(field_path, str) or not field_path.strip():
+            raise ValidationError("field_reports.field_path is required")
         sku_id = report.get("sku_id")
         if sku_id is not None:
             sku_id = _validate_uuid(sku_id, "field_reports.sku_id")
-        comment = report.get("comment")
-        if not isinstance(comment, str) or not comment.strip():
-            raise ValidationError("field_reports.comment is required")
-        if len(comment) > 500:
-            raise ValidationError("field_reports.comment must be at most 500 characters")
-        field_reports.append({"field_name": field_name, "sku_id": sku_id, "comment": comment})
+        message = report.get("message")
+        if not isinstance(message, str) or not message.strip():
+            raise ValidationError("field_reports.message is required")
+        if len(message) > 1000:
+            raise ValidationError("field_reports.message must be at most 1000 characters")
+        severity = report.get("severity", "ERROR")
+        if severity not in FIELD_REPORT_SEVERITIES:
+            raise ValidationError("field_reports.severity is invalid")
+        field_reports.append(
+            {
+                "field_path": field_path,
+                "sku_id": sku_id,
+                "message": message,
+                "severity": severity,
+            }
+        )
 
     return {
-        "blocking_reason_id": blocking_reason_id,
+        "blocking_reason_ids": blocking_reason_ids,
         "moderator_comment": moderator_comment,
         "field_reports": field_reports,
     }
 
 
-def _get_blocking_reason(connection: Any, reason_id: str) -> Any:
-    return connection.execute(
-        """
+def _get_blocking_reasons(connection: Any, reason_ids: list[str]) -> list[Any]:
+    placeholders = ", ".join("?" for _ in reason_ids)
+    rows = connection.execute(
+        f"""
         SELECT id, title, hard_block
         FROM product_blocking_reasons
-        WHERE id = ?
+        WHERE id IN ({placeholders})
         """,
-        (reason_id,),
-    ).fetchone()
+        reason_ids,
+    ).fetchall()
+    by_id = {row["id"]: row for row in rows}
+    return [by_id.get(reason_id) for reason_id in reason_ids]
+
+
+def _primary_blocking_reason(reasons: list[Any]) -> Any:
+    for reason in reasons:
+        if bool(reason["hard_block"]):
+            return reason
+    return reasons[0]
+
+
+def _b2b_field_reports(field_reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "field_name": report["field_path"],
+            "sku_id": report["sku_id"],
+            "comment": report["message"],
+        }
+        for report in field_reports
+    ]
 
 
 def _ensure_assigned_for_decision(row: Any, moderator_id: str) -> None:
