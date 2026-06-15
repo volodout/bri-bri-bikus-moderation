@@ -13,17 +13,21 @@ class ReferenceService:
 
     def blocking_reasons(self) -> list[dict[str, Any]]:
         self.store.ensure_schema()
-        with self.store.connect() as connection:
+        connection = self.store.connect()
+        try:
             rows = connection.execute(
                 """
-                SELECT id, title, hard_block
+                SELECT id, code, title, hard_block, is_active
                 FROM product_blocking_reasons
+                WHERE is_active = 1
                 """
             ).fetchall()
+        finally:
+            connection.close()
 
         by_id = {row["id"]: row for row in rows}
         ordered_reasons = []
-        for reason_id, _, _ in BLOCKING_REASON_SEEDS:
+        for reason_id, _, _, _ in BLOCKING_REASON_SEEDS:
             row = by_id.pop(reason_id, None)
             if row is not None:
                 ordered_reasons.append(_reason_to_json(row))
@@ -37,7 +41,8 @@ class ReferenceService:
 def _reason_to_json(row: Any) -> dict[str, Any]:
     return {
         "id": row["id"],
+        "code": row["code"],
         "title": row["title"],
         "hard_block": bool(row["hard_block"]),
+        "is_active": bool(row["is_active"]),
     }
-
