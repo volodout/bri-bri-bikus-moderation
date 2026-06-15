@@ -78,6 +78,17 @@ class DecisionService:
         moderator_comment = _optional_comment(payload)
         self.store.ensure_schema()
 
+        with self.store.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT *
+                FROM product_moderation
+                WHERE product_id = ?
+                """,
+                (product_id,),
+            ).fetchone()
+            _ensure_assigned_for_decision(row, moderator_id)
+
         product = self._fetch_product(product_id)
         skus = product.get("skus")
         if not isinstance(skus, list) or len(skus) == 0:
@@ -126,6 +137,31 @@ class DecisionService:
         )
 
     def decline(self, product_id: str, moderator_id: str, payload: Any) -> DecisionResult:
+        return self._decline(product_id, moderator_id, payload)
+
+    def block_ticket(self, ticket_id: str, moderator_id: str, payload: Any) -> DecisionResult:
+        ticket_id = _validate_uuid(ticket_id, "ticket_id")
+        self.store.ensure_schema()
+        with self.store.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT product_id
+                FROM product_moderation
+                WHERE id = ?
+                """,
+                (ticket_id,),
+            ).fetchone()
+        if row is None:
+            raise NotFoundError("Ticket not found")
+        return self._decline(row["product_id"], moderator_id, payload, product_moderation_id=ticket_id)
+
+    def _decline(
+        self,
+        product_id: str,
+        moderator_id: str,
+        payload: Any,
+        product_moderation_id: str | None = None,
+    ) -> DecisionResult:
         product_id = _validate_uuid(product_id, "product_id")
         moderator_id = _validate_uuid(moderator_id, "X-Moderator-Id")
         request = _decline_request(payload)
@@ -209,7 +245,11 @@ class DecisionService:
                 field_reports=request["field_reports"],
             )
 
-        return DecisionResult(product_id=product_id, status=decision_status)
+        return DecisionResult(
+            product_id=product_id,
+            status=decision_status,
+            product_moderation_id=product_moderation_id,
+        )
 
     def _fetch_product(self, product_id: str) -> dict[str, Any]:
         try:
@@ -340,7 +380,7 @@ def _ensure_assigned_for_decision(row: Any, moderator_id: str) -> None:
     if row is None:
         raise NotFoundError("Product not found in moderation queue")
     if row["status"] == "HARD_BLOCKED":
-        raise ConflictError("Product is permanently blocked")
+        raise ForbiddenError("Product is permanently blocked")
     if row["status"] != "IN_REVIEW":
         raise ConflictError("Product is not in review status")
     if row["moderator_id"] != moderator_id:

@@ -95,8 +95,8 @@ def handle_decline_post(
     raw_body: bytes,
     decision_service: Any,
 ) -> tuple[int, dict[str, Any] | None]:
-    product_id = _match_product_action(path, "decline")
-    if product_id is None:
+    ticket_id = _match_ticket_action(path, "block")
+    if ticket_id is None:
         return 404, error_payload("NOT_FOUND", "Not found")
 
     try:
@@ -106,7 +106,7 @@ def handle_decline_post(
         payload = json.loads(raw_body.decode("utf-8")) if raw_body else {}
         if not isinstance(payload, dict):
             raise json.JSONDecodeError("non-object body", "", 0)
-        result = decision_service.decline(product_id, moderator_id, payload)
+        result = decision_service.block_ticket(ticket_id, moderator_id, payload)
     except ModerationError as error:
         return error.status_code, error_payload(error.code, error.message)
     except json.JSONDecodeError:
@@ -158,7 +158,7 @@ def make_handler(
                     raw_body,
                     decision_service,
                 )
-            elif _match_product_action(self.path, "decline") is not None and decision_service is not None:
+            elif _match_ticket_action(self.path, "block") is not None and decision_service is not None:
                 status_code, payload = handle_decline_post(
                     self.path,
                     self.headers,
