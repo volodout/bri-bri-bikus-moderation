@@ -8,7 +8,7 @@ import uuid
 from typing import Any
 
 from moderation.database import ModerationStore
-from moderation.errors import ValidationError
+from moderation.errors import ConflictError, ValidationError
 from moderation.product_events import utc_now
 
 
@@ -19,24 +19,32 @@ class ModerationCard:
     seller_id: str
     status: str
     queue_priority: int
+    moderator_id: str | None
     json_before: dict[str, Any] | None
     json_after: dict[str, Any]
     blocking_history: dict[str, Any] | None
     date_created: str
     date_updated: str
+    date_moderation: str | None
 
     def as_json(self) -> dict[str, Any]:
         return {
-            "product_moderation_id": self.product_moderation_id,
+            "id": self.product_moderation_id,
             "product_id": self.product_id,
             "seller_id": self.seller_id,
+            "category_id": None,
+            "kind": _ticket_kind(self.json_before),
             "status": self.status,
             "queue_priority": self.queue_priority,
+            "assigned_moderator_id": self.moderator_id,
+            "claimed_at": self.date_updated if self.status == "IN_REVIEW" else None,
+            "claim_expires_at": None,
+            "decision_at": self.date_moderation,
+            "created_at": self.date_created,
+            "updated_at": self.date_updated,
             "json_before": self.json_before,
             "json_after": self.json_after,
             "blocking_history": self.blocking_history,
-            "date_created": self.date_created,
-            "date_updated": self.date_updated,
         }
 
 
@@ -44,13 +52,26 @@ class QueueService:
     def __init__(self, store: ModerationStore):
         self.store = store
 
-    def get_next(self, queue_id: Any, moderator_id: str) -> ModerationCard | None:
-        queue_ids = _queue_scan_order(queue_id)
+    def get_next(self, queue_priority: Any, moderator_id: str) -> ModerationCard | None:
+        queue_ids = _queue_scan_order(queue_priority)
         moderator_id = _validate_uuid(moderator_id, "X-Moderator-Id")
         self.store.ensure_schema()
         now = utc_now()
 
         with self.store.transaction(immediate=True) as connection:
+            held = connection.execute(
+                """
+                SELECT 1
+                FROM product_moderation
+                WHERE status = 'IN_REVIEW'
+                  AND moderator_id = ?
+                LIMIT 1
+                """,
+                (moderator_id,),
+            ).fetchone()
+            if held is not None:
+                raise ConflictError("Moderator already has a ticket in review")
+
             for candidate_queue_id in queue_ids:
                 row = connection.execute(
                     """
@@ -89,14 +110,14 @@ class QueueService:
         return None
 
 
-def _queue_scan_order(queue_id: Any) -> list[int]:
-    if queue_id is None:
+def _queue_scan_order(queue_priority: Any) -> list[int]:
+    if queue_priority is None:
         return [1, 2, 3, 4]
-    if isinstance(queue_id, bool) or not isinstance(queue_id, int):
-        raise ValidationError("queueId must be an integer from 1 to 4")
-    if queue_id < 1 or queue_id > 4:
-        raise ValidationError("queueId must be an integer from 1 to 4")
-    return [queue_id]
+    if isinstance(queue_priority, bool) or not isinstance(queue_priority, int):
+        raise ValidationError("queue_priority must be an integer from 1 to 4")
+    if queue_priority < 1 or queue_priority > 4:
+        raise ValidationError("queue_priority must be an integer from 1 to 4")
+    return [queue_priority]
 
 
 def _validate_uuid(value: str, field_name: str) -> str:
@@ -117,12 +138,18 @@ def _row_to_card(connection: Any, row: Any) -> ModerationCard:
         seller_id=row["seller_id"],
         status=row["status"],
         queue_priority=row["queue_priority"],
+        moderator_id=row["moderator_id"],
         json_before=json_before,
         json_after=json_after,
         blocking_history=_blocking_history(connection, row, json_before),
         date_created=row["date_created"],
         date_updated=row["date_updated"],
+        date_moderation=row["date_moderation"],
     )
+
+
+def _ticket_kind(json_before: dict[str, Any] | None) -> str:
+    return "CREATE" if json_before is None else "EDIT"
 
 
 def _blocking_history(connection: Any, row: Any, json_before: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -175,4 +202,3 @@ def _blocking_history(connection: Any, row: Any, json_before: dict[str, Any] | N
         "field_reports": field_reports,
         "date_blocked": row["date_moderation"],
     }
-
