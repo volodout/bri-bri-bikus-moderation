@@ -75,19 +75,12 @@ class ModerationStore:
                 CREATE TABLE IF NOT EXISTS product_moderation_field_report (
                     id TEXT PRIMARY KEY,
                     product_moderation_id TEXT NOT NULL,
-                    field_name TEXT NOT NULL CHECK (
-                        field_name IN (
-                            'title',
-                            'description',
-                            'product_images',
-                            'category',
-                            'sku_name',
-                            'sku_image',
-                            'sku_price'
-                        )
-                    ),
+                    field_path TEXT NOT NULL,
                     sku_id TEXT,
-                    comment TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    severity TEXT NOT NULL DEFAULT 'ERROR' CHECK (
+                        severity IN ('INFO', 'WARNING', 'ERROR')
+                    ),
                     date_created TEXT NOT NULL,
                     FOREIGN KEY(product_moderation_id)
                         REFERENCES product_moderation(id)
@@ -113,6 +106,7 @@ class ModerationStore:
                     ON product_moderation(status, queue_priority, date_updated);
                 """
             )
+            self._ensure_field_report_schema(connection)
             connection.executemany(
                 """
                 INSERT OR IGNORE INTO product_blocking_reasons (id, title, hard_block)
@@ -120,3 +114,63 @@ class ModerationStore:
                 """,
                 BLOCKING_REASON_SEEDS,
             )
+
+    def _ensure_field_report_schema(self, connection: sqlite3.Connection) -> None:
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(product_moderation_field_report)")
+        }
+        if {"field_path", "message"}.issubset(columns):
+            return
+
+        connection.execute(
+            "ALTER TABLE product_moderation_field_report "
+            "RENAME TO product_moderation_field_report_legacy"
+        )
+        connection.executescript(
+            """
+            CREATE TABLE product_moderation_field_report (
+                id TEXT PRIMARY KEY,
+                product_moderation_id TEXT NOT NULL,
+                field_path TEXT NOT NULL,
+                sku_id TEXT,
+                message TEXT NOT NULL,
+                severity TEXT NOT NULL DEFAULT 'ERROR' CHECK (
+                    severity IN ('INFO', 'WARNING', 'ERROR')
+                ),
+                date_created TEXT NOT NULL,
+                FOREIGN KEY(product_moderation_id)
+                    REFERENCES product_moderation(id)
+                    ON DELETE CASCADE
+            );
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO product_moderation_field_report (
+                id,
+                product_moderation_id,
+                field_path,
+                sku_id,
+                message,
+                severity,
+                date_created
+            )
+            SELECT
+                id,
+                product_moderation_id,
+                field_name,
+                sku_id,
+                comment,
+                'ERROR',
+                date_created
+            FROM product_moderation_field_report_legacy
+            WHERE EXISTS (
+                SELECT 1
+                FROM product_moderation
+                WHERE product_moderation.id =
+                    product_moderation_field_report_legacy.product_moderation_id
+            )
+            """
+        )
+        connection.execute("DROP TABLE product_moderation_field_report_legacy")

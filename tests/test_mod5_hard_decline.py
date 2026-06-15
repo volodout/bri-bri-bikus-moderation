@@ -84,8 +84,8 @@ class HardDeclineTestCase(unittest.TestCase):
 
     def payload(self) -> dict:
         return {
-            "blocking_reason_id": HARD_REASON_ID,
-            "moderator_comment": "Counterfeit product confirmed",
+            "blocking_reason_ids": [HARD_REASON_ID],
+            "comment": "Counterfeit product confirmed",
             "field_reports": [],
         }
 

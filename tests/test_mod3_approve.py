@@ -83,9 +83,9 @@ class ApproveTestCase(unittest.TestCase):
                 INSERT INTO product_moderation_field_report (
                     id,
                     product_moderation_id,
-                    field_name,
+                    field_path,
                     sku_id,
-                    comment,
+                    message,
                     date_created
                 )
                 VALUES (?, ?, 'description', NULL, 'Fix it', ?)

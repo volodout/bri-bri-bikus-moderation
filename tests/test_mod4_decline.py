@@ -75,18 +75,19 @@ class DeclineTestCase(unittest.TestCase):
 
     def decline_payload(self) -> dict:
         return {
-            "blocking_reason_id": SOFT_REASON_ID,
-            "moderator_comment": "Description and photos do not match",
+            "blocking_reason_ids": [SOFT_REASON_ID],
+            "comment": "Description and photos do not match",
             "field_reports": [
                 {
-                    "field_name": "description",
+                    "field_path": "description",
                     "sku_id": None,
-                    "comment": "Description belongs to another product",
+                    "message": "Description belongs to another product",
                 },
                 {
-                    "field_name": "sku_price",
+                    "field_path": "skus[0].price",
                     "sku_id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
-                    "comment": "Suspiciously low price",
+                    "message": "Suspiciously low price",
+                    "severity": "WARNING",
                 },
             ],
         }
@@ -102,9 +103,9 @@ class DeclineTestCase(unittest.TestCase):
         with self.store.connect() as connection:
             rows = connection.execute(
                 """
-                SELECT field_name, sku_id, comment
+                SELECT field_path, sku_id, message, severity
                 FROM product_moderation_field_report
-                ORDER BY field_name
+                ORDER BY field_path
                 """
             ).fetchall()
         return [dict(row) for row in rows]
@@ -121,29 +122,69 @@ class DeclineTestCase(unittest.TestCase):
         self.assertEqual("BLOCKED", row["status"])
         self.assertEqual(SOFT_REASON_ID, row["blocking_reason_id"])
         self.assertEqual("Description and photos do not match", row["moderator_comment"])
-        self.assertEqual(2, len(self.reports()))
+        self.assertEqual(
+            [
+                {
+                    "field_path": "description",
+                    "sku_id": None,
+                    "message": "Description belongs to another product",
+                    "severity": "ERROR",
+                },
+                {
+                    "field_path": "skus[0].price",
+                    "sku_id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+                    "message": "Suspiciously low price",
+                    "severity": "WARNING",
+                },
+            ],
+            self.reports(),
+        )
         event = client.sent_events[0]
         self.assertEqual("BLOCKED", event["event_type"])
         self.assertFalse(event["hard_block"])
         self.assertEqual(SOFT_REASON_ID, event["blocking_reason_id"])
         self.assertEqual(MODERATOR_ID, event["moderator_id"])
         self.assertIn("occurred_at", event)
-        self.assertEqual(2, len(event["field_reports"]))
+        self.assertEqual(
+            [
+                {
+                    "field_name": "description",
+                    "sku_id": None,
+                    "comment": "Description belongs to another product",
+                },
+                {
+                    "field_name": "skus[0].price",
+                    "sku_id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+                    "comment": "Suspiciously low price",
+                },
+            ],
+            event["field_reports"],
+        )
 
     def test_decline_rejects_unknown_reason(self) -> None:
         self.insert_card()
         service = DecisionService(self.store, FakeB2BClient())
         payload = self.decline_payload()
-        payload["blocking_reason_id"] = "99999999-9999-9999-9999-999999999999"
+        payload["blocking_reason_ids"] = ["99999999-9999-9999-9999-999999999999"]
 
         with self.assertRaises(BusinessError):
+            service.decline(PRODUCT_ID, MODERATOR_ID, payload)
+
+    def test_decline_rejects_legacy_single_reason_id(self) -> None:
+        self.insert_card()
+        service = DecisionService(self.store, FakeB2BClient())
+        payload = self.decline_payload()
+        payload.pop("blocking_reason_ids")
+        payload["blocking_reason_id"] = SOFT_REASON_ID
+
+        with self.assertRaises(ValidationError):
             service.decline(PRODUCT_ID, MODERATOR_ID, payload)
 
     def test_decline_validates_field_reports(self) -> None:
         self.insert_card()
         service = DecisionService(self.store, FakeB2BClient())
         payload = self.decline_payload()
-        payload["field_reports"][0]["field_name"] = "productImages"
+        payload["field_reports"][0]["field_path"] = ""
 
         with self.assertRaises(ValidationError):
             service.decline(PRODUCT_ID, MODERATOR_ID, payload)
