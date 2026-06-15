@@ -16,12 +16,12 @@ def handle_product_event_post(
     raw_body: bytes,
     product_event_service: Any,
     b2b_to_mod_key: str,
-) -> tuple[int, dict[str, Any]]:
-    if path != "/api/v1/events/product":
-        return 404, {"error": "Not found"}
+) -> tuple[int, dict[str, Any] | None]:
+    if path != "/api/v1/b2b/events":
+        return 404, error_payload("NOT_FOUND", "Not found")
 
     if headers.get("X-Service-Key") != b2b_to_mod_key:
-        return 401, {"error": "Unauthorized"}
+        return 401, error_payload("UNAUTHORIZED", "Unauthorized")
 
     try:
         if not raw_body:
@@ -29,11 +29,11 @@ def handle_product_event_post(
         payload = json.loads(raw_body.decode("utf-8"))
         result = product_event_service.handle(payload)
     except ModerationError as error:
-        return error.status_code, {"error": error.message}
+        return error.status_code, error_payload(error.code, error.message)
     except json.JSONDecodeError:
-        return 400, {"error": "Request body must be valid JSON"}
+        return 400, error_payload("VALIDATION_ERROR", "Request body must be valid JSON")
 
-    return 200, result.as_json()
+    return 202, None
 
 
 def handle_get_next_post(
@@ -43,7 +43,7 @@ def handle_get_next_post(
     queue_service: Any,
 ) -> tuple[int, dict[str, Any] | None]:
     if path != "/api/v1/product-moderation/get-next":
-        return 404, {"error": "Not found"}
+        return 404, error_payload("NOT_FOUND", "Not found")
 
     try:
         moderator_id = headers.get("X-Moderator-Id")
@@ -54,9 +54,9 @@ def handle_get_next_post(
             raise json.JSONDecodeError("non-object body", "", 0)
         card = queue_service.get_next(payload.get("queueId"), moderator_id)
     except ModerationError as error:
-        return error.status_code, {"error": error.message}
+        return error.status_code, error_payload(error.code, error.message)
     except json.JSONDecodeError:
-        return 400, {"error": "Request body must be a JSON object"}
+        return 400, error_payload("VALIDATION_ERROR", "Request body must be a JSON object")
 
     if card is None:
         return 204, None
@@ -71,7 +71,7 @@ def handle_approve_post(
 ) -> tuple[int, dict[str, Any] | None]:
     product_id = _match_product_action(path, "approve")
     if product_id is None:
-        return 404, {"error": "Not found"}
+        return 404, error_payload("NOT_FOUND", "Not found")
 
     try:
         moderator_id = headers.get("X-Moderator-Id")
@@ -82,9 +82,9 @@ def handle_approve_post(
             raise json.JSONDecodeError("non-object body", "", 0)
         result = decision_service.approve(product_id, moderator_id, payload)
     except ModerationError as error:
-        return error.status_code, {"error": error.message}
+        return error.status_code, error_payload(error.code, error.message)
     except json.JSONDecodeError:
-        return 400, {"error": "Request body must be a JSON object"}
+        return 400, error_payload("VALIDATION_ERROR", "Request body must be a JSON object")
 
     return 200, result.as_json()
 
@@ -97,7 +97,7 @@ def handle_decline_post(
 ) -> tuple[int, dict[str, Any] | None]:
     product_id = _match_product_action(path, "decline")
     if product_id is None:
-        return 404, {"error": "Not found"}
+        return 404, error_payload("NOT_FOUND", "Not found")
 
     try:
         moderator_id = headers.get("X-Moderator-Id")
@@ -108,9 +108,9 @@ def handle_decline_post(
             raise json.JSONDecodeError("non-object body", "", 0)
         result = decision_service.decline(product_id, moderator_id, payload)
     except ModerationError as error:
-        return error.status_code, {"error": error.message}
+        return error.status_code, error_payload(error.code, error.message)
     except json.JSONDecodeError:
-        return 400, {"error": "Request body must be a JSON object"}
+        return 400, error_payload("VALIDATION_ERROR", "Request body must be a JSON object")
 
     return 200, result.as_json()
 
@@ -132,11 +132,11 @@ def make_handler(
             if self.path == "/api/v1/product-blocking-reasons" and reference_service is not None:
                 self._send_json(200, reference_service.blocking_reasons())
                 return
-            self._send_json(404, {"error": "Not found"})
+            self._send_json(404, error_payload("NOT_FOUND", "Not found"))
 
         def do_POST(self) -> None:
             raw_body = self._read_body()
-            if self.path == "/api/v1/events/product":
+            if self.path == "/api/v1/b2b/events":
                 status_code, payload = handle_product_event_post(
                     self.path,
                     self.headers,
@@ -166,7 +166,7 @@ def make_handler(
                     decision_service,
                 )
             else:
-                status_code, payload = 404, {"error": "Not found"}
+                status_code, payload = 404, error_payload("NOT_FOUND", "Not found")
             self._send_json(status_code, payload)
 
         def log_message(self, format: str, *args: Any) -> None:
@@ -194,6 +194,10 @@ def _match_product_action(path: str, action: str) -> str | None:
     if match is None:
         return None
     return match.group(1)
+
+
+def error_payload(code: str, message: str) -> dict[str, str]:
+    return {"code": code, "message": message}
 
 
 def serve(

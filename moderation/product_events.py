@@ -15,15 +15,21 @@ from moderation.errors import BusinessError, UpstreamError, ValidationError
 
 PRODUCT_EVENT_SENDER = "b2b"
 PRODUCT_EVENTS = {"CREATED", "EDITED", "DELETED"}
+PRODUCT_EVENT_TYPES = {
+    "PRODUCT_CREATED": "CREATED",
+    "PRODUCT_EDITED": "EDITED",
+    "PRODUCT_DELETED": "DELETED",
+}
 
 
 @dataclass(frozen=True)
 class ProductEvent:
     idempotency_key: str
     product_id: str
-    seller_id: str
+    seller_id: str | None
     event: str
     event_date: str
+    json_after: dict[str, Any] | None = None
 
     @classmethod
     def from_payload(cls, payload: Any) -> "ProductEvent":
@@ -31,16 +37,29 @@ class ProductEvent:
             raise ValidationError("Request body must be a JSON object")
 
         idempotency_key = _required_uuid(payload, "idempotency_key")
-        product_id = _required_uuid(payload, "product_id")
-        seller_id = _required_uuid(payload, "seller_id")
-        event = payload.get("event")
-        if event not in PRODUCT_EVENTS:
-            raise ValidationError("event must be one of CREATED, EDITED, DELETED")
+        event_type = payload.get("event_type")
+        event = PRODUCT_EVENT_TYPES.get(event_type)
+        if event is None:
+            raise ValidationError(
+                "event_type must be one of PRODUCT_CREATED, PRODUCT_EDITED, PRODUCT_DELETED"
+            )
 
-        event_date = payload.get("date")
+        event_date = payload.get("occurred_at")
         if not isinstance(event_date, str):
-            raise ValidationError("date is required")
-        event_date = normalize_iso_datetime(event_date, field_name="date")
+            raise ValidationError("occurred_at is required")
+        event_date = normalize_iso_datetime(event_date, field_name="occurred_at")
+
+        event_payload = payload.get("payload")
+        if not isinstance(event_payload, dict):
+            raise ValidationError("payload is required")
+
+        product_id = _required_uuid(event_payload, "product_id")
+        seller_id = None if event == "DELETED" else _required_uuid(event_payload, "seller_id")
+        json_after = None
+        if event in {"CREATED", "EDITED"}:
+            json_after = _required_object(event_payload, "json_after")
+        if event == "EDITED":
+            _required_object(event_payload, "json_before")
 
         return cls(
             idempotency_key=idempotency_key,
@@ -48,6 +67,7 @@ class ProductEvent:
             seller_id=seller_id,
             event=event,
             event_date=event_date,
+            json_after=json_after,
         )
 
 
@@ -100,7 +120,7 @@ class ProductEventService:
                     _record_processed_event(connection, event.idempotency_key, {"status": "accepted"})
                     return EventResult()
 
-        product = self._fetch_product(event.product_id)
+        product = event.json_after if event.json_after is not None else self._fetch_product(event.product_id)
         product = strip_private_fields(product)
         total_active_quantity = calculate_total_active_quantity(product)
         product_json = json.dumps(product, ensure_ascii=False, separators=(",", ":"))
@@ -255,6 +275,13 @@ def _required_uuid(payload: dict[str, Any], field_name: str) -> str:
         return str(uuid.UUID(value))
     except ValueError as error:
         raise ValidationError(f"{field_name} must be a UUID") from error
+
+
+def _required_object(payload: dict[str, Any], field_name: str) -> dict[str, Any]:
+    value = payload.get(field_name)
+    if not isinstance(value, dict):
+        raise ValidationError(f"{field_name} is required")
+    return value
 
 
 def _processed_event_exists(connection: Any, idempotency_key: str) -> bool:
