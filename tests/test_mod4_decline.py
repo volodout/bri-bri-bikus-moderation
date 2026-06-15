@@ -159,6 +159,27 @@ class DeclineTestCase(unittest.TestCase):
         self.assertEqual([], self.reports())
 
     def test_http_decline_returns_response_body(self) -> None:
+        ticket_id = self.insert_card()
+        service = DecisionService(self.store, FakeB2BClient())
+
+        status_code, payload = handle_decline_post(
+            f"/api/v1/tickets/{ticket_id}/block",
+            {"X-Moderator-Id": MODERATOR_ID},
+            json.dumps(self.decline_payload()).encode("utf-8"),
+            service,
+        )
+
+        self.assertEqual(200, status_code)
+        self.assertEqual(
+            {
+                "product_id": PRODUCT_ID,
+                "status": "BLOCKED",
+                "product_moderation_id": ticket_id,
+            },
+            payload,
+        )
+
+    def test_legacy_product_decline_route_is_not_mounted(self) -> None:
         self.insert_card()
         service = DecisionService(self.store, FakeB2BClient())
 
@@ -169,8 +190,8 @@ class DeclineTestCase(unittest.TestCase):
             service,
         )
 
-        self.assertEqual(200, status_code)
-        self.assertEqual({"product_id": PRODUCT_ID, "status": "BLOCKED"}, payload)
+        self.assertEqual(404, status_code)
+        self.assertEqual({"code": "NOT_FOUND", "message": "Not found"}, payload)
 
 
 if __name__ == "__main__":
