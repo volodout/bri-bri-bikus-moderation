@@ -12,16 +12,16 @@ from typing import Iterator
 
 
 BLOCKING_REASON_SEEDS = [
-    ("a7b8c9d0-1234-5678-ef01-890123456789", "Описание не соответствует товару", 0),
-    ("b8c9d0e1-2345-6789-f012-901234567890", "Изображение не соответствует товару", 0),
-    ("c9d0e1f2-3456-7890-0123-012345678901", "Некорректная категория товара", 0),
-    ("d0e1f2a3-4567-8901-1234-123456789012", "Недостаточно информации о товаре", 0),
-    ("e1f2a3b4-5678-9012-2345-234567890123", "Нецензурные или оскорбительные материалы", 0),
-    ("f2a3b4c5-6789-0123-3456-345678901234", "Дублирование существующего товара", 0),
-    ("a3b4c5d6-7890-1234-4567-456789012345", "Некорректная цена", 0),
-    ("b4c5d6e7-8901-2345-5678-567890123456", "Контрафактный товар", 1),
-    ("c5d6e7f8-9012-3456-6789-678901234567", "Товар запрещён к продаже на территории РФ", 1),
-    ("d6e7f8a9-0123-4567-7890-789012345678", "Товар нарушает авторские права", 1),
+    ("a7b8c9d0-1234-5678-ef01-890123456789", "DESCRIPTION_MISMATCH", "Описание не соответствует товару", 0),
+    ("b8c9d0e1-2345-6789-f012-901234567890", "IMAGE_MISMATCH", "Изображение не соответствует товару", 0),
+    ("c9d0e1f2-3456-7890-0123-012345678901", "WRONG_CATEGORY", "Некорректная категория товара", 0),
+    ("d0e1f2a3-4567-8901-1234-123456789012", "INSUFFICIENT_INFO", "Недостаточно информации о товаре", 0),
+    ("e1f2a3b4-5678-9012-2345-234567890123", "OFFENSIVE_CONTENT", "Нецензурные или оскорбительные материалы", 0),
+    ("f2a3b4c5-6789-0123-3456-345678901234", "DUPLICATE_PRODUCT", "Дублирование существующего товара", 0),
+    ("a3b4c5d6-7890-1234-4567-456789012345", "INVALID_PRICE", "Некорректная цена", 0),
+    ("b4c5d6e7-8901-2345-5678-567890123456", "COUNTERFEIT_PRODUCT", "Контрафактный товар", 1),
+    ("c5d6e7f8-9012-3456-6789-678901234567", "PROHIBITED_PRODUCT", "Товар запрещён к продаже на территории РФ", 1),
+    ("d6e7f8a9-0123-4567-7890-789012345678", "COPYRIGHT_VIOLATION", "Товар нарушает авторские права", 1),
 ]
 
 
@@ -89,8 +89,10 @@ class ModerationStore:
 
                 CREATE TABLE IF NOT EXISTS product_blocking_reasons (
                     id TEXT PRIMARY KEY,
+                    code TEXT NOT NULL UNIQUE,
                     title TEXT NOT NULL,
-                    hard_block INTEGER NOT NULL DEFAULT 0
+                    hard_block INTEGER NOT NULL DEFAULT 0,
+                    is_active INTEGER NOT NULL DEFAULT 1
                 );
 
                 CREATE TABLE IF NOT EXISTS processed_events (
@@ -107,12 +109,70 @@ class ModerationStore:
                 """
             )
             self._ensure_field_report_schema(connection)
+            self._ensure_blocking_reason_schema(connection)
             connection.executemany(
                 """
-                INSERT OR IGNORE INTO product_blocking_reasons (id, title, hard_block)
-                VALUES (?, ?, ?)
+                INSERT OR IGNORE INTO product_blocking_reasons (id, code, title, hard_block, is_active)
+                VALUES (?, ?, ?, ?, 1)
                 """,
                 BLOCKING_REASON_SEEDS,
+            )
+            connection.executemany(
+                """
+                UPDATE product_blocking_reasons
+                SET code = COALESCE(code, ?),
+                    title = ?,
+                    hard_block = ?
+                WHERE id = ?
+                """,
+                [
+                    (code, title, hard_block, reason_id)
+                    for reason_id, code, title, hard_block in BLOCKING_REASON_SEEDS
+                ],
+            )
+
+    def _ensure_blocking_reason_schema(self, connection: sqlite3.Connection) -> None:
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(product_blocking_reasons)")
+        }
+        if "code" not in columns:
+            connection.execute("ALTER TABLE product_blocking_reasons ADD COLUMN code TEXT")
+        if "is_active" not in columns:
+            connection.execute(
+                "ALTER TABLE product_blocking_reasons "
+                "ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1"
+            )
+
+        seed_codes = {
+            reason_id: code
+            for reason_id, code, _, _ in BLOCKING_REASON_SEEDS
+        }
+        for reason_id, code in seed_codes.items():
+            connection.execute(
+                """
+                UPDATE product_blocking_reasons
+                SET code = ?
+                WHERE id = ?
+                  AND code IS NULL
+                """,
+                (code, reason_id),
+            )
+        for row in connection.execute(
+            """
+            SELECT id
+            FROM product_blocking_reasons
+            WHERE code IS NULL
+            """
+        ):
+            fallback_code = f"CUSTOM_{row['id'].replace('-', '')[:12].upper()}"
+            connection.execute(
+                """
+                UPDATE product_blocking_reasons
+                SET code = ?
+                WHERE id = ?
+                """,
+                (fallback_code, row["id"]),
             )
 
     def _ensure_field_report_schema(self, connection: sqlite3.Connection) -> None:

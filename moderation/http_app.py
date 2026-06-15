@@ -129,7 +129,7 @@ def make_handler(
             if self.path == "/health":
                 self._send_json(200, {"status": "ok"})
                 return
-            if self.path == "/api/v1/product-blocking-reasons" and reference_service is not None:
+            if self.path == "/api/v1/blocking-reasons" and reference_service is not None:
                 self._send_json(200, reference_service.blocking_reasons())
                 return
             self._send_json(404, error_payload("NOT_FOUND", "Not found"))
