@@ -97,9 +97,11 @@ class HardDeclineTestCase(unittest.TestCase):
         self.assertEqual(HARD_REASON_ID, row["blocking_reason_id"])
         self.assertEqual("Counterfeit product confirmed", row["moderator_comment"])
         event = client.sent_events[0]
-        self.assertEqual("BLOCKED", event["status"])
+        self.assertEqual("BLOCKED", event["event_type"])
         self.assertTrue(event["hard_block"])
-        self.assertEqual(HARD_REASON_ID, event["blocking_reason"]["id"])
+        self.assertEqual(HARD_REASON_ID, event["blocking_reason_id"])
+        self.assertEqual(MODERATOR_ID, event["moderator_id"])
+        self.assertIn("occurred_at", event)
         self.assertEqual([], event["field_reports"])
 
     def test_failed_b2b_event_rolls_back_hard_block(self) -> None:
@@ -114,4 +116,3 @@ class HardDeclineTestCase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

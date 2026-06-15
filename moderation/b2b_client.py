@@ -53,7 +53,7 @@ class B2BClient:
 
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request = Request(
-            f"{self.base_url}/api/v1/events/moderation",
+            f"{self.base_url}/api/v1/moderation/events",
             data=body,
             headers={
                 "X-Service-Key": self.service_key,

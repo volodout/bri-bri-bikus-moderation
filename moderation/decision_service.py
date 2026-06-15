@@ -33,9 +33,13 @@ FIELD_REPORT_NAMES = {
 class DecisionResult:
     product_id: str
     status: str
+    product_moderation_id: str | None = None
 
     def as_json(self) -> dict[str, str]:
-        return {"product_id": self.product_id, "status": self.status}
+        payload = {"product_id": self.product_id, "status": self.status}
+        if self.product_moderation_id is not None:
+            payload["product_moderation_id"] = self.product_moderation_id
+        return payload
 
 
 class DecisionService:
@@ -43,7 +47,32 @@ class DecisionService:
         self.store = store
         self.b2b_client = b2b_client
 
+    def approve_ticket(self, ticket_id: str, moderator_id: str, payload: Any | None = None) -> DecisionResult:
+        ticket_id = _validate_uuid(ticket_id, "ticket_id")
+        self.store.ensure_schema()
+        with self.store.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT product_id
+                FROM product_moderation
+                WHERE id = ?
+                """,
+                (ticket_id,),
+            ).fetchone()
+        if row is None:
+            raise NotFoundError("Ticket not found")
+        return self._approve(row["product_id"], moderator_id, payload, product_moderation_id=ticket_id)
+
     def approve(self, product_id: str, moderator_id: str, payload: Any | None = None) -> DecisionResult:
+        return self._approve(product_id, moderator_id, payload)
+
+    def _approve(
+        self,
+        product_id: str,
+        moderator_id: str,
+        payload: Any | None = None,
+        product_moderation_id: str | None = None,
+    ) -> DecisionResult:
         product_id = _validate_uuid(product_id, "product_id")
         moderator_id = _validate_uuid(moderator_id, "X-Moderator-Id")
         moderator_comment = _optional_comment(payload)
@@ -88,9 +117,13 @@ class DecisionService:
                 """,
                 (row["id"],),
             )
-            self._send_moderated_event(product_id)
+            self._send_moderated_event(product_id, moderator_id, moderator_comment)
 
-        return DecisionResult(product_id=product_id, status="MODERATED")
+        return DecisionResult(
+            product_id=product_id,
+            status="MODERATED",
+            product_moderation_id=product_moderation_id,
+        )
 
     def decline(self, product_id: str, moderator_id: str, payload: Any) -> DecisionResult:
         product_id = _validate_uuid(product_id, "product_id")
@@ -171,7 +204,7 @@ class DecisionService:
                 product_id,
                 hard_block=hard_block,
                 reason_id=reason["id"],
-                reason_title=reason["title"],
+                moderator_id=moderator_id,
                 moderator_comment=request["moderator_comment"],
                 field_reports=request["field_reports"],
             )
@@ -184,13 +217,21 @@ class DecisionService:
         except B2BClientError as error:
             raise UpstreamError(str(error)) from error
 
-    def _send_moderated_event(self, product_id: str) -> None:
+    def _send_moderated_event(
+        self,
+        product_id: str,
+        moderator_id: str | None,
+        moderator_comment: str | None,
+    ) -> None:
         try:
             self.b2b_client.send_moderation_event(
                 {
                     "idempotency_key": str(uuid.uuid4()),
                     "product_id": product_id,
-                    "status": "MODERATED",
+                    "event_type": "MODERATED",
+                    "moderator_id": moderator_id,
+                    "moderator_comment": moderator_comment,
+                    "occurred_at": utc_now(),
                 }
             )
         except B2BClientError as error:
@@ -201,7 +242,7 @@ class DecisionService:
         product_id: str,
         hard_block: bool,
         reason_id: str,
-        reason_title: str,
+        moderator_id: str,
         moderator_comment: str,
         field_reports: list[dict[str, Any]],
     ) -> None:
@@ -210,13 +251,12 @@ class DecisionService:
                 {
                     "idempotency_key": str(uuid.uuid4()),
                     "product_id": product_id,
-                    "status": "BLOCKED",
+                    "event_type": "BLOCKED",
+                    "occurred_at": utc_now(),
+                    "moderator_id": moderator_id,
+                    "moderator_comment": moderator_comment,
+                    "blocking_reason_id": reason_id,
                     "hard_block": hard_block,
-                    "blocking_reason": {
-                        "id": reason_id,
-                        "title": reason_title,
-                        "comment": moderator_comment,
-                    },
                     "field_reports": field_reports,
                 }
             )
@@ -238,11 +278,11 @@ def _optional_comment(payload: Any | None) -> str | None:
         return None
     if not isinstance(payload, dict):
         raise ValidationError("Request body must be a JSON object")
-    comment = payload.get("moderator_comment")
+    comment = payload.get("comment", payload.get("moderator_comment"))
     if comment is None:
         return None
     if not isinstance(comment, str):
-        raise ValidationError("moderator_comment must be a string")
+        raise ValidationError("comment must be a string")
     return comment
 
 

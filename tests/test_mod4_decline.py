@@ -123,9 +123,11 @@ class DeclineTestCase(unittest.TestCase):
         self.assertEqual("Description and photos do not match", row["moderator_comment"])
         self.assertEqual(2, len(self.reports()))
         event = client.sent_events[0]
-        self.assertEqual("BLOCKED", event["status"])
+        self.assertEqual("BLOCKED", event["event_type"])
         self.assertFalse(event["hard_block"])
-        self.assertEqual(SOFT_REASON_ID, event["blocking_reason"]["id"])
+        self.assertEqual(SOFT_REASON_ID, event["blocking_reason_id"])
+        self.assertEqual(MODERATOR_ID, event["moderator_id"])
+        self.assertIn("occurred_at", event)
         self.assertEqual(2, len(event["field_reports"]))
 
     def test_decline_rejects_unknown_reason(self) -> None:
