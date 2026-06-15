@@ -69,8 +69,8 @@ def handle_approve_post(
     raw_body: bytes,
     decision_service: Any,
 ) -> tuple[int, dict[str, Any] | None]:
-    product_id = _match_product_action(path, "approve")
-    if product_id is None:
+    ticket_id = _match_ticket_action(path, "approve")
+    if ticket_id is None:
         return 404, error_payload("NOT_FOUND", "Not found")
 
     try:
@@ -80,7 +80,7 @@ def handle_approve_post(
         payload = json.loads(raw_body.decode("utf-8")) if raw_body else {}
         if not isinstance(payload, dict):
             raise json.JSONDecodeError("non-object body", "", 0)
-        result = decision_service.approve(product_id, moderator_id, payload)
+        result = decision_service.approve_ticket(ticket_id, moderator_id, payload)
     except ModerationError as error:
         return error.status_code, error_payload(error.code, error.message)
     except json.JSONDecodeError:
@@ -151,7 +151,7 @@ def make_handler(
                     raw_body,
                     queue_service,
                 )
-            elif _match_product_action(self.path, "approve") is not None and decision_service is not None:
+            elif _match_ticket_action(self.path, "approve") is not None and decision_service is not None:
                 status_code, payload = handle_approve_post(
                     self.path,
                     self.headers,
@@ -191,6 +191,13 @@ def make_handler(
 
 def _match_product_action(path: str, action: str) -> str | None:
     match = re.fullmatch(rf"/api/v1/products/([^/]+)/{action}", path)
+    if match is None:
+        return None
+    return match.group(1)
+
+
+def _match_ticket_action(path: str, action: str) -> str | None:
+    match = re.fullmatch(rf"/api/v1/tickets/([^/]+)/{action}", path)
     if match is None:
         return None
     return match.group(1)

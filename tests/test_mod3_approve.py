@@ -115,7 +115,7 @@ class ApproveTestCase(unittest.TestCase):
         result = service.approve(
             PRODUCT_ID,
             MODERATOR_ID,
-            {"moderator_comment": "Looks good"},
+            {"comment": "Looks good"},
         )
 
         row = self.row()
@@ -125,8 +125,11 @@ class ApproveTestCase(unittest.TestCase):
         self.assertIsNone(row["blocking_reason_id"])
         self.assertIsNotNone(row["date_moderation"])
         self.assertEqual(0, self.field_report_count())
-        self.assertEqual("MODERATED", client.sent_events[0]["status"])
+        self.assertEqual("MODERATED", client.sent_events[0]["event_type"])
         self.assertEqual(PRODUCT_ID, client.sent_events[0]["product_id"])
+        self.assertEqual(MODERATOR_ID, client.sent_events[0]["moderator_id"])
+        self.assertEqual("Looks good", client.sent_events[0]["moderator_comment"])
+        self.assertIn("occurred_at", client.sent_events[0])
         self.assertIn("idempotency_key", client.sent_events[0])
 
     def test_approve_rejects_card_assigned_to_another_moderator(self) -> None:
@@ -165,20 +168,40 @@ class ApproveTestCase(unittest.TestCase):
         self.assertEqual(1, self.field_report_count())
 
     def test_http_approve_returns_response_body(self) -> None:
+        ticket_id = self.insert_card()
+        service = DecisionService(self.store, FakeB2BClient())
+
+        status_code, payload = handle_approve_post(
+            f"/api/v1/tickets/{ticket_id}/approve",
+            {"X-Moderator-Id": MODERATOR_ID},
+            b'{"comment":"ok"}',
+            service,
+        )
+
+        self.assertEqual(200, status_code)
+        self.assertEqual(
+            {
+                "product_id": PRODUCT_ID,
+                "status": "MODERATED",
+                "product_moderation_id": ticket_id,
+            },
+            payload,
+        )
+
+    def test_legacy_product_approve_route_is_not_mounted(self) -> None:
         self.insert_card()
         service = DecisionService(self.store, FakeB2BClient())
 
         status_code, payload = handle_approve_post(
             f"/api/v1/products/{PRODUCT_ID}/approve",
             {"X-Moderator-Id": MODERATOR_ID},
-            b'{"moderator_comment":"ok"}',
+            b"{}",
             service,
         )
 
-        self.assertEqual(200, status_code)
-        self.assertEqual({"product_id": PRODUCT_ID, "status": "MODERATED"}, payload)
+        self.assertEqual(404, status_code)
+        self.assertEqual({"code": "NOT_FOUND", "message": "Not found"}, payload)
 
 
 if __name__ == "__main__":
     unittest.main()
-
