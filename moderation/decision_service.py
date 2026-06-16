@@ -267,7 +267,11 @@ class DecisionService:
         return DecisionResult(
             product_id=product_id,
             status=decision_status,
-            product_moderation_id=product_moderation_id,
+            product_moderation_id=product_moderation_id or row["id"],
+            seller_id=row["seller_id"],
+            kind=_ticket_kind(row["json_before"]),
+            queue_priority=row["queue_priority"],
+            created_at=row["date_created"],
         )
 
     def _fetch_product(self, product_id: str) -> dict[str, Any]:

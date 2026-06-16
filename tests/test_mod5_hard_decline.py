@@ -97,7 +97,18 @@ class HardDeclineTestCase(unittest.TestCase):
         result = service.decline(PRODUCT_ID, MODERATOR_ID, self.payload())
 
         row = self.row()
-        self.assertEqual({"product_id": PRODUCT_ID, "status": "HARD_BLOCKED"}, result.as_json())
+        self.assertEqual(
+            {
+                "id": row["id"],
+                "product_id": PRODUCT_ID,
+                "seller_id": SELLER_ID,
+                "kind": "CREATE",
+                "status": "HARD_BLOCKED",
+                "queue_priority": 1,
+                "created_at": "2026-03-01T10:00:00.000Z",
+            },
+            result.as_json(),
+        )
         self.assertEqual("HARD_BLOCKED", row["status"])
         self.assertEqual(HARD_REASON_ID, row["blocking_reason_id"])
         self.assertEqual("Counterfeit product confirmed", row["moderator_comment"])

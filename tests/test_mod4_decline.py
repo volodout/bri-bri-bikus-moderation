@@ -118,7 +118,18 @@ class DeclineTestCase(unittest.TestCase):
         result = service.decline(PRODUCT_ID, MODERATOR_ID, self.decline_payload())
 
         row = self.row()
-        self.assertEqual({"product_id": PRODUCT_ID, "status": "BLOCKED"}, result.as_json())
+        self.assertEqual(
+            {
+                "id": row["id"],
+                "product_id": PRODUCT_ID,
+                "seller_id": SELLER_ID,
+                "kind": "CREATE",
+                "status": "BLOCKED",
+                "queue_priority": 1,
+                "created_at": "2026-03-01T10:00:00.000Z",
+            },
+            result.as_json(),
+        )
         self.assertEqual("BLOCKED", row["status"])
         self.assertEqual(SOFT_REASON_ID, row["blocking_reason_id"])
         self.assertEqual("Description and photos do not match", row["moderator_comment"])
@@ -213,9 +224,13 @@ class DeclineTestCase(unittest.TestCase):
         self.assertEqual(200, status_code)
         self.assertEqual(
             {
+                "id": ticket_id,
                 "product_id": PRODUCT_ID,
+                "seller_id": SELLER_ID,
+                "kind": "CREATE",
                 "status": "BLOCKED",
-                "product_moderation_id": ticket_id,
+                "queue_priority": 1,
+                "created_at": "2026-03-01T10:00:00.000Z",
             },
             payload,
         )
