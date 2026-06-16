@@ -119,8 +119,19 @@ class ApproveTestCase(unittest.TestCase):
         )
 
         row = self.row()
-        self.assertEqual({"product_id": PRODUCT_ID, "status": "MODERATED"}, result.as_json())
-        self.assertEqual("MODERATED", row["status"])
+        self.assertEqual(
+            {
+                "id": row["id"],
+                "product_id": PRODUCT_ID,
+                "seller_id": SELLER_ID,
+                "kind": "CREATE",
+                "status": "APPROVED",
+                "queue_priority": 1,
+                "created_at": "2026-03-01T10:00:00.000Z",
+            },
+            result.as_json(),
+        )
+        self.assertEqual("APPROVED", row["status"])
         self.assertEqual("Looks good", row["moderator_comment"])
         self.assertIsNone(row["blocking_reason_id"])
         self.assertIsNotNone(row["date_moderation"])
@@ -181,9 +192,13 @@ class ApproveTestCase(unittest.TestCase):
         self.assertEqual(200, status_code)
         self.assertEqual(
             {
+                "id": ticket_id,
                 "product_id": PRODUCT_ID,
-                "status": "MODERATED",
-                "product_moderation_id": ticket_id,
+                "seller_id": SELLER_ID,
+                "kind": "CREATE",
+                "status": "APPROVED",
+                "queue_priority": 1,
+                "created_at": "2026-03-01T10:00:00.000Z",
             },
             payload,
         )

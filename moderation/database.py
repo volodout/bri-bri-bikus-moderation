@@ -57,7 +57,7 @@ class ModerationStore:
                     product_id TEXT NOT NULL UNIQUE,
                     seller_id TEXT NOT NULL,
                     status TEXT NOT NULL CHECK (
-                        status IN ('PENDING', 'IN_REVIEW', 'MODERATED', 'BLOCKED', 'HARD_BLOCKED')
+                        status IN ('PENDING', 'IN_REVIEW', 'APPROVED', 'BLOCKED', 'HARD_BLOCKED')
                     ),
                     queue_priority INTEGER NOT NULL CHECK (queue_priority BETWEEN 1 AND 4),
                     json_before TEXT,
