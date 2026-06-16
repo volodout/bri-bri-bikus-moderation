@@ -339,6 +339,6 @@ def _next_queue_priority(existing: Any, total_active_quantity: int) -> int:
     old_status = existing["status"]
     if old_status == "BLOCKED":
         return 2
-    if old_status == "MODERATED":
+    if old_status == "APPROVED":
         return 3 if total_active_quantity > 0 else 4
     return int(existing["queue_priority"])

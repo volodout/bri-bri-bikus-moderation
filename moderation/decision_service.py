@@ -26,8 +26,28 @@ class DecisionResult:
     product_id: str
     status: str
     product_moderation_id: str | None = None
+    seller_id: str | None = None
+    kind: str | None = None
+    queue_priority: int | None = None
+    created_at: str | None = None
 
-    def as_json(self) -> dict[str, str]:
+    def as_json(self) -> dict[str, Any]:
+        if (
+            self.product_moderation_id is not None
+            and self.seller_id is not None
+            and self.kind is not None
+            and self.queue_priority is not None
+            and self.created_at is not None
+        ):
+            return {
+                "id": self.product_moderation_id,
+                "product_id": self.product_id,
+                "seller_id": self.seller_id,
+                "kind": self.kind,
+                "status": self.status,
+                "queue_priority": self.queue_priority,
+                "created_at": self.created_at,
+            }
         payload = {"product_id": self.product_id, "status": self.status}
         if self.product_moderation_id is not None:
             payload["product_moderation_id"] = self.product_moderation_id
@@ -101,7 +121,7 @@ class DecisionService:
             cursor = connection.execute(
                 """
                 UPDATE product_moderation
-                SET status = 'MODERATED',
+                SET status = 'APPROVED',
                     date_moderation = ?,
                     moderator_comment = ?,
                     blocking_reason_id = NULL
@@ -124,8 +144,12 @@ class DecisionService:
 
         return DecisionResult(
             product_id=product_id,
-            status="MODERATED",
-            product_moderation_id=product_moderation_id,
+            status="APPROVED",
+            product_moderation_id=product_moderation_id or row["id"],
+            seller_id=row["seller_id"],
+            kind=_ticket_kind(row["json_before"]),
+            queue_priority=row["queue_priority"],
+            created_at=row["date_created"],
         )
 
     def decline(self, product_id: str, moderator_id: str, payload: Any) -> DecisionResult:
@@ -319,6 +343,10 @@ def _optional_comment(payload: Any | None) -> str | None:
     if not isinstance(comment, str):
         raise ValidationError("comment must be a string")
     return comment
+
+
+def _ticket_kind(json_before: Any) -> str:
+    return "CREATE" if json_before is None else "EDIT"
 
 
 def _decline_request(payload: Any) -> dict[str, Any]:
