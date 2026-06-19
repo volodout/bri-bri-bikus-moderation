@@ -58,6 +58,14 @@ class QueueService:
         self.store.ensure_schema()
         now = utc_now()
 
+        claim_next_pending_card = getattr(self.store, "claim_next_pending_card", None)
+        if callable(claim_next_pending_card):
+            row = claim_next_pending_card(queue_ids, moderator_id, now)
+            if row is None:
+                return None
+            with self.store.connect() as connection:
+                return _row_to_card(connection, row)
+
         with self.store.transaction(immediate=True) as connection:
             held = connection.execute(
                 """

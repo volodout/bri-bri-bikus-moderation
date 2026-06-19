@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import tempfile
 import unittest
@@ -8,6 +9,7 @@ import uuid
 from moderation.database import ModerationStore
 from moderation.errors import ConflictError, ValidationError
 from moderation.http_app import handle_get_next_post
+from moderation.postgres_database import PostgresModerationStore
 from moderation.queue_service import QueueService
 
 
@@ -156,6 +158,22 @@ class GetNextTestCase(unittest.TestCase):
     def test_empty_queue_returns_none(self) -> None:
         self.assertIsNone(self.service.get_next(None, MODERATOR_ID))
 
+    def test_store_claim_method_is_used_for_postgres_skip_locked(self) -> None:
+        store = FakeClaimStore()
+        service = QueueService(store)
+
+        card = service.get_next(None, MODERATOR_ID)
+
+        self.assertEqual([1, 2, 3, 4], store.claimed_queue_ids)
+        self.assertEqual(MODERATOR_ID, store.claimed_moderator_id)
+        self.assertEqual("IN_REVIEW", card.status)
+        self.assertEqual("99999999-9999-9999-9999-999999999999", card.product_moderation_id)
+
+    def test_postgres_claim_uses_for_update_skip_locked(self) -> None:
+        source = inspect.getsource(PostgresModerationStore.claim_next_pending_card)
+
+        self.assertIn("FOR UPDATE SKIP LOCKED", source)
+
     def test_moderator_already_has_in_review_returns_409(self) -> None:
         held_id = self.insert_card(
             "11111111-1111-1111-1111-111111111111",
@@ -257,6 +275,48 @@ class GetNextTestCase(unittest.TestCase):
             },
             card.blocking_history,
         )
+
+
+class FakeConnection:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return None
+
+
+class FakeClaimStore:
+    def __init__(self):
+        self.claimed_queue_ids = None
+        self.claimed_moderator_id = None
+
+    def ensure_schema(self) -> None:
+        return None
+
+    def claim_next_pending_card(self, queue_ids: list[int], moderator_id: str, now: str):
+        self.claimed_queue_ids = queue_ids
+        self.claimed_moderator_id = moderator_id
+        return {
+            "id": "99999999-9999-9999-9999-999999999999",
+            "product_id": "11111111-1111-1111-1111-111111111111",
+            "seller_id": SELLER_ID,
+            "status": "IN_REVIEW",
+            "queue_priority": 1,
+            "moderator_id": moderator_id,
+            "json_before": None,
+            "json_after": json.dumps(
+                {"id": "11111111-1111-1111-1111-111111111111", "skus": []},
+                separators=(",", ":"),
+            ),
+            "blocking_reason_id": None,
+            "moderator_comment": None,
+            "date_created": "2026-03-01T10:00:00.000Z",
+            "date_updated": now,
+            "date_moderation": None,
+        }
+
+    def connect(self) -> FakeConnection:
+        return FakeConnection()
 
 
 if __name__ == "__main__":
