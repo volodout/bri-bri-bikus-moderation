@@ -3,6 +3,7 @@ from moderation.config import Settings
 from moderation.database import ModerationStore
 from moderation.decision_service import DecisionService
 from moderation.http_app import serve
+from moderation.postgres_database import PostgresModerationStore
 from moderation.product_events import ProductEventService
 from moderation.queue_service import QueueService
 from moderation.reference_service import ReferenceService
@@ -10,7 +11,11 @@ from moderation.reference_service import ReferenceService
 
 def main() -> None:
     settings = Settings.from_env()
-    store = ModerationStore(settings.database_path)
+    store = (
+        PostgresModerationStore(settings.database_url)
+        if settings.database_url
+        else ModerationStore(settings.database_path)
+    )
     store.ensure_schema()
     b2b_client = B2BClient(settings.b2b_base_url, settings.mod_to_b2b_key)
     product_event_service = ProductEventService(store, b2b_client)
